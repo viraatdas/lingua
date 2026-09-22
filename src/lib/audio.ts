@@ -127,8 +127,8 @@ function bufToBase64(buf: ArrayBuffer): string {
 }
 
 /** Play an MP3 returned by the TTS endpoint. Returns when playback ends. */
-export async function playTts(text: string, lang: string): Promise<void> {
-  const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, lang }) });
+export async function playTts(text: string, lang: string, voice?: string): Promise<void> {
+  const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, lang, voice }) });
   if (!res.ok) throw new Error("tts failed");
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

@@ -3,13 +3,15 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LANGUAGES } from "@/lib/languages";
+import { LANGUAGES, VOICES } from "@/lib/languages";
 import { getScenario } from "@/lib/scenarios";
 import { useStore, type SupportMode } from "@/lib/store";
 import { RealtimeSession, type RealtimeStatus, type TranscriptLine, type TranscriptRole } from "@/lib/realtime";
 import type { NewsStory } from "@/lib/prompts";
 import type { FeedbackResult } from "@/app/api/feedback/route";
 import type { Suggestion } from "@/app/api/suggest/route";
+import type { TranslatedLine } from "@/app/api/translate/route";
+import { playTts } from "@/lib/audio";
 import { Phrase, ScoreRing, Spinner } from "@/components/ui";
 import { MicIcon } from "@/components/PronounceDrill";
 
@@ -50,6 +52,8 @@ function Conversation({ id }: { id: string }) {
   const { lang, level, ready, deck, cardState, addCard, logSession, data, setSettings } = useStore();
   const L = LANGUAGES[lang];
   const support = data.settings.support;
+  const voice = data.settings.voice === "auto" ? scenario?.voice : data.settings.voice;
+  const englishMode = data.settings.transcriptEnglish;
 
   const [stage, setStage] = useState<Stage>("brief");
   const [status, setStatus] = useState<RealtimeStatus>("idle");
@@ -67,6 +71,9 @@ function Conversation({ id }: { id: string }) {
   const [showTranslation, setShowTranslation] = useState(false);
   const [suggestion, setSuggestion] = useState<{ forLine: string; data: Suggestion | null } | null>(null);
   const requestedFor = useRef<string | null>(null);
+  const [translations, setTranslations] = useState<Record<string, TranslatedLine>>({});
+  const translateRequested = useRef<Set<string>>(new Set());
+  const [previewing, setPreviewing] = useState(false);
   const [revealed, setRevealed] = useState<string | null>(null); // tutor line id whose full script was revealed on demand
   const suggestAbort = useRef<AbortController | null>(null);
   const session = useRef<RealtimeSession | null>(null);
@@ -113,6 +120,43 @@ function Conversation({ id }: { id: string }) {
   }, [stage, scenario, lastTutor, lines, lang, level, deckSample]);
   const suggestionLoading = !!lastTutor?.final && suggestion?.forLine !== lastTutor.id;
 
+  // Translate every finished line once, in small batches.
+  useEffect(() => {
+    if (stage === "brief") return;
+    const pending = lines.filter((l) => l.final && l.text.trim() && !translateRequested.current.has(l.id));
+    if (!pending.length) return;
+    for (const l of pending) translateRequested.current.add(l.id);
+    fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lang, lines: pending.map((l) => ({ id: l.id, text: l.text })) }),
+    })
+      .then(async (r) => (r.ok ? ((await r.json()) as { lines: TranslatedLine[] }) : { lines: [] }))
+      .then((d) => {
+        if (!d.lines.length) return;
+        setTranslations((prev) => {
+          const next = { ...prev };
+          for (const t of d.lines) next[t.id] = t;
+          return next;
+        });
+      })
+      .catch(() => {
+        for (const l of pending) translateRequested.current.delete(l.id);
+      });
+  }, [stage, lines, lang]);
+
+  const previewVoice = async () => {
+    if (!scenario || previewing) return;
+    setPreviewing(true);
+    try {
+      await playTts(scenario.opener[lang], lang, voice);
+    } catch {
+      /* preview is best-effort */
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
   useEffect(() => {
     if (!isNews || !ready) return;
     let cancelled = false;
@@ -148,6 +192,8 @@ function Conversation({ id }: { id: string }) {
     setSuggestion(null);
     setRevealed(null);
     requestedFor.current = null;
+    setTranslations({});
+    translateRequested.current = new Set();
     const s = new RealtimeSession({
       onStatus: (st, detail) => {
         setStatus(st);
@@ -166,11 +212,11 @@ function Conversation({ id }: { id: string }) {
     });
     session.current = s;
     try {
-      await s.connect({ lang, level, scenarioId: scenario.id, news: isNews ? (news ?? undefined) : undefined, deckSample, support });
+      await s.connect({ lang, level, scenarioId: scenario.id, news: isNews ? (news ?? undefined) : undefined, deckSample, support, voice });
     } catch {
       /* status already reflects the error */
     }
-  }, [scenario, lang, level, isNews, news, deckSample, support]);
+  }, [scenario, lang, level, isNews, news, deckSample, support, voice]);
 
   const end = useCallback(async () => {
     if (!scenario) return;
@@ -264,6 +310,38 @@ function Conversation({ id }: { id: string }) {
           </div>
         </div>
 
+        <div className="mt-10">
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 className="text-sm text-ink-3">Voice</h2>
+            <button onClick={previewVoice} className="text-sm underline underline-offset-2 disabled:opacity-50" disabled={previewing}>
+              {previewing ? "Playing" : "Hear this voice"}
+            </button>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Voice">
+            <button
+              role="radio"
+              aria-checked={data.settings.voice === "auto"}
+              onClick={() => setSettings({ voice: "auto" })}
+              className={`rounded-full border px-3 py-1.5 text-sm ${data.settings.voice === "auto" ? "border-ink bg-ink text-paper" : "border-line hover:bg-wash"}`}
+            >
+              Character ({VOICES.find((v) => v.id === scenario.voice)?.label ?? scenario.voice})
+            </button>
+            {VOICES.map((v) => (
+              <button
+                key={v.id}
+                role="radio"
+                aria-checked={data.settings.voice === v.id}
+                onClick={() => setSettings({ voice: v.id })}
+                title={v.blurb}
+                className={`rounded-full border px-3 py-1.5 text-sm ${data.settings.voice === v.id ? "border-ink bg-ink text-paper" : "border-line hover:bg-wash"}`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-ink-3">{VOICES.find((v) => v.id === voice)?.blurb}. Each scenario has its own character voice unless you pick one.</p>
+        </div>
+
         {deckCards.length > 0 && (
           <div className="mt-10">
             <h2 className="text-sm text-ink-3">Lines you might need</h2>
@@ -342,9 +420,12 @@ function Conversation({ id }: { id: string }) {
               {status === "error" && (statusDetail || "Something went wrong")}
             </div>
           </div>
-          <button onClick={end} className="btn btn-ghost btn-sm">
-            End and get feedback
-          </button>
+          <div className="flex items-center gap-2">
+            <EnglishToggle value={englishMode} onChange={(v) => setSettings({ transcriptEnglish: v })} />
+            <button onClick={end} className="btn btn-ghost btn-sm">
+              End and get feedback
+            </button>
+          </div>
         </div>
 
         <div ref={scroller} className="scroll-thin flex-1 overflow-y-auto px-4 py-6">
@@ -369,6 +450,7 @@ function Conversation({ id }: { id: string }) {
                   {l.text}
                   {!l.final && <span className="ml-1 inline-block h-4 w-0.5 animate-pulse bg-ink-3 align-middle" aria-hidden />}
                 </p>
+                <LineEnglish mode={englishMode} t={translations[l.id]} pending={l.final && !!l.text.trim()} right={l.role === "you"} />
               </div>
             ))}
             {saved.length > 0 && (
@@ -555,10 +637,13 @@ function Conversation({ id }: { id: string }) {
         {showTranslation && (
           <div className="mt-3 space-y-3 border-t border-line pt-4">
             {transcriptLines.map((l) => (
-              <p key={l.id} className={l.role === "you" ? "text-ink-2" : "phrase text-lg"}>
-                <span className="mr-2 text-xs text-ink-3">{l.role === "you" ? "You" : L.name}</span>
-                {l.text}
-              </p>
+              <div key={l.id}>
+                <p className={l.role === "you" ? "text-ink-2" : "phrase text-lg"}>
+                  <span className="mr-2 text-xs text-ink-3">{l.role === "you" ? "You" : L.name}</span>
+                  {l.text}
+                </p>
+                {translations[l.id]?.translation && <p className="text-sm text-ink-3">{translations[l.id].translation}</p>}
+              </div>
             ))}
           </div>
         )}
@@ -637,6 +722,41 @@ function SuggestionCard({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function EnglishToggle({ value, onChange }: { value: "off" | "lines" | "gloss"; onChange: (v: "off" | "lines" | "gloss") => void }) {
+  const opts: { id: "off" | "lines" | "gloss"; label: string }[] = [
+    { id: "off", label: "Off" },
+    { id: "lines", label: "English" },
+    { id: "gloss", label: "Word by word" },
+  ];
+  return (
+    <div className="flex items-center rounded-full border border-line p-0.5" role="group" aria-label="Show English">
+      {opts.map((o) => (
+        <button key={o.id} onClick={() => onChange(o.id)} aria-pressed={value === o.id} className={`rounded-full px-2.5 py-1 text-xs ${value === o.id ? "bg-ink text-paper" : "text-ink-3 hover:text-ink"}`}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function LineEnglish({ mode, t, pending, right }: { mode: "off" | "lines" | "gloss"; t?: TranslatedLine; pending: boolean; right: boolean }) {
+  if (mode === "off") return null;
+  if (!t) return pending ? <p className="mt-0.5 text-sm text-ink-3/60">translating</p> : null;
+  if (mode === "lines" || !t.gloss.length) return <p className="mt-0.5 text-sm text-ink-2">{t.translation}</p>;
+  return (
+    <div className={`mt-1.5 flex flex-wrap gap-x-3 gap-y-1.5 ${right ? "justify-end" : ""}`}>
+      {t.gloss.map((g, i) => (
+        <span key={i} className="inline-flex flex-col items-start rounded-lg bg-wash px-2 py-1 text-left leading-tight">
+          <span className="phrase text-sm">{g.word}</span>
+          {g.reading && <span className="text-[11px] text-ink-3">{g.reading}</span>}
+          <span className="text-[11px] text-ink-2">{g.meaning}</span>
+        </span>
+      ))}
+      <span className="basis-full text-sm text-ink-2">{t.translation}</span>
     </div>
   );
 }

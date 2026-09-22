@@ -25,6 +25,7 @@ interface SessionRequest {
   news?: unknown;
   deckSample?: string[];
   support?: string;
+  voice?: string;
 }
 
 /**

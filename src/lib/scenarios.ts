@@ -15,11 +15,14 @@ export interface Scenario {
   categories: string[];
   /** Per-language opening line the tutor should say first. */
   opener: Record<LangCode, string>;
+  /** Default voice for this character; the learner can override it. */
+  voice: string;
 }
 
 export const SCENARIOS: Scenario[] = [
   {
     id: "cafe",
+    voice: "coral",
     kind: "travel",
     title: "Ordering at a café",
     tagline: "Drinks, a pastry, and paying without fumbling.",
@@ -31,6 +34,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "restaurant",
+    voice: "cedar",
     kind: "travel",
     title: "Dinner at a restaurant",
     tagline: "Get a table, handle the menu, sort out allergies, ask for the bill.",
@@ -42,6 +46,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "directions",
+    voice: "sage",
     kind: "travel",
     title: "Asking for directions",
     tagline: "You're lost. A local helps you find the metro.",
@@ -53,6 +58,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "taxi",
+    voice: "ballad",
     kind: "travel",
     title: "Taking a taxi",
     tagline: "Address, meter, price, and small talk with the driver.",
@@ -64,6 +70,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "hotel",
+    voice: "marin",
     kind: "travel",
     title: "Checking into a hotel",
     tagline: "Reservation, passport, wifi, and one problem with the room.",
@@ -75,6 +82,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "market",
+    voice: "verse",
     kind: "travel",
     title: "Shopping at a market",
     tagline: "Prices, sizes, a little bargaining.",
@@ -86,6 +94,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "pharmacy",
+    voice: "echo",
     kind: "travel",
     title: "At the pharmacy",
     tagline: "Describe what hurts and get something for it.",
@@ -97,6 +106,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "meeting",
+    voice: "shimmer",
     kind: "travel",
     title: "Meeting someone new",
     tagline: "Introductions, where you're from, what you do, what to see.",
@@ -108,6 +118,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "news",
+    voice: "ash",
     kind: "news",
     title: "Today's news",
     tagline: "Three stories from today, discussed at your level.",
@@ -119,6 +130,7 @@ export const SCENARIOS: Scenario[] = [
   },
   {
     id: "free",
+    voice: "marin",
     kind: "free",
     title: "Free conversation",
     tagline: "Talk about whatever you want. The tutor follows your lead.",

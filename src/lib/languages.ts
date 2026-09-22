@@ -67,3 +67,27 @@ export const LEVELS: { id: Level; label: string; blurb: string }[] = [
 export function isLang(x: unknown): x is LangCode {
   return x === "es" || x === "zh";
 }
+
+export interface Voice {
+  id: string;
+  label: string;
+  blurb: string;
+}
+
+/** Voices supported by both the Realtime API and the TTS model. */
+export const VOICES: Voice[] = [
+  { id: "marin", label: "Marin", blurb: "warm, clear, feminine" },
+  { id: "cedar", label: "Cedar", blurb: "calm, low, masculine" },
+  { id: "coral", label: "Coral", blurb: "bright, friendly, feminine" },
+  { id: "ash", label: "Ash", blurb: "relaxed, masculine" },
+  { id: "sage", label: "Sage", blurb: "soft, measured, feminine" },
+  { id: "echo", label: "Echo", blurb: "steady, masculine" },
+  { id: "ballad", label: "Ballad", blurb: "expressive, masculine" },
+  { id: "verse", label: "Verse", blurb: "lively, masculine" },
+  { id: "shimmer", label: "Shimmer", blurb: "light, quick, feminine" },
+  { id: "alloy", label: "Alloy", blurb: "neutral, even" },
+];
+
+export function isVoice(x: unknown): x is string {
+  return typeof x === "string" && VOICES.some((v) => v.id === x);
+}

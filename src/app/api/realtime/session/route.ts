@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isLang, type Level } from "@/lib/languages";
 import { getScenario } from "@/lib/scenarios";
 import { tutorInstructions, type NewsStory } from "@/lib/prompts";
-import { LANGUAGES } from "@/lib/languages";
+import { LANGUAGES, isVoice } from "@/lib/languages";
 import { MODELS } from "@/lib/server/openai";
 
 export const runtime = "nodejs";
@@ -18,6 +18,7 @@ export async function POST(req: Request) {
     news?: NewsStory[];
     deckSample?: string[];
     support?: string;
+    voice?: string;
   };
   if (!isLang(body.lang)) return new NextResponse("Unknown language", { status: 400 });
   const level = (LEVELS.has(body.level ?? "") ? body.level : "A2") as Level;
@@ -52,7 +53,7 @@ export async function POST(req: Request) {
           interrupt_response: true,
         },
       },
-      output: { voice: L.voice, speed: level === "A1" ? 0.85 : level === "A2" ? 0.9 : 1.0 },
+      output: { voice: isVoice(body.voice) ? body.voice : scenario.voice || L.voice, speed: level === "A1" ? 0.85 : level === "A2" ? 0.9 : 1.0 },
     },
     tools: [
       {

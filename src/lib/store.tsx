@@ -43,6 +43,9 @@ export interface Settings {
   newPerDay: number;
   onboarded: boolean;
   support: SupportMode;
+  /** "auto" picks the scenario's character voice. */
+  voice: string;
+  transcriptEnglish: "off" | "lines" | "gloss";
 }
 
 export interface StoreData {
@@ -64,7 +67,7 @@ const emptyProgress = (): LangProgress => ({
 
 const defaultData = (): StoreData => ({
   version: 1,
-  settings: { lang: "es", level: "A2", newPerDay: 10, onboarded: false, support: "fade" },
+  settings: { lang: "es", level: "A2", newPerDay: 10, onboarded: false, support: "fade", voice: "auto", transcriptEnglish: "lines" },
   progress: { es: emptyProgress(), zh: emptyProgress() },
 });
 

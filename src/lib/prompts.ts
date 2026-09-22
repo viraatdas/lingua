@@ -122,3 +122,15 @@ export function suggestPrompt(lang: LangCode, level: Level, scenario: Scenario, 
     .filter(Boolean)
     .join("\n");
 }
+
+export function translatePrompt(lang: LangCode, lines: { id: string; text: string }[]): string {
+  const L = LANGUAGES[lang];
+  const zh = lang === "zh";
+  return [
+    `Translate these ${L.name} lines from a spoken conversation for a learner. They come from speech recognition, so ignore odd punctuation.`,
+    `For each line give: "translation", a natural English rendering; and "gloss", a word-by-word breakdown in order, where each item is a word or fixed chunk exactly as it appears in the line${zh ? " (split by word, not by character, with pinyin with tone marks)" : ""} and its literal English meaning in this context. Keep gloss meanings to one to three words. Skip punctuation.`,
+    "Return only JSON: {\"lines\": [{\"id\": \"...\", \"translation\": \"...\", \"gloss\": [{\"word\": \"...\", " + (zh ? "\"reading\": \"...\", " : "") + "\"meaning\": \"...\"}]}]}",
+    "Lines:",
+    JSON.stringify(lines),
+  ].join("\n");
+}
