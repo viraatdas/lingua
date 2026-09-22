@@ -13,6 +13,7 @@ export const MODELS = {
   transcribe: "gpt-4o-mini-transcribe",
   audioGrader: process.env.AUDIO_MODEL ?? "gpt-audio-1.5",
   text: process.env.TEXT_MODEL ?? "gpt-5.4-mini",
+  fast: process.env.FAST_MODEL ?? "gpt-4.1-mini",
   tts: "gpt-4o-mini-tts",
 };
 

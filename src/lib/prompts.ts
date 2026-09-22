@@ -9,7 +9,7 @@ export interface NewsStory {
   url: string;
 }
 
-export function tutorInstructions(opts: { lang: LangCode; level: Level; scenario: Scenario; news?: NewsStory[]; deckSample?: string[] }): string {
+export function tutorInstructions(opts: { lang: LangCode; level: Level; scenario: Scenario; news?: NewsStory[]; deckSample?: string[]; support?: string }): string {
   const L = LANGUAGES[opts.lang];
   const langName = L.name;
   const zh = opts.lang === "zh";
@@ -34,6 +34,13 @@ export function tutorInstructions(opts: { lang: LangCode; level: Level; scenario
       zh ? "- For Mandarin: use simplified characters when writing, and pinyin with tone marks in the reading field of save_phrase." : "- Use usted or tú consistently based on the situation; a stranger in a shop is usted.",
     ].join("\n"),
   );
+  if (opts.support === "script" || opts.support === "fade") {
+    parts.push(
+      "The app is showing the learner a suggested line to read aloud after each of your turns. So: ask exactly one clear question per turn, keep the situation linear, and wait. If they read the line with mistakes, accept it and move on; do not make them repeat unless it was unintelligible.",
+    );
+  } else if (opts.support === "hints") {
+    parts.push("The app is showing the learner a short English hint about what to say after each of your turns. Ask one clear question per turn and give them time.");
+  }
   if (opts.deckSample?.length) {
     parts.push(`Phrases the learner is currently studying (work a few of these in naturally so they get to use them): ${opts.deckSample.join(" | ")}`);
   }
@@ -91,6 +98,26 @@ export function feedbackPrompt(lang: LangCode, level: Level, scenario: Scenario,
     `{"score": 0-100, "summary": "two sentences in English on how it went", "goalsMet": ["goal text that was achieved"], "corrections": [{"said": "what the learner said", "better": "a more natural version", "why": "short reason in English"}], "vocab": [{"text": "useful phrase in ${L.name} the learner should learn from this conversation", ${zh ? '"reading": "pinyin with tone marks", ' : ""}"meaning": "English"}], "nextTime": "one sentence on what to focus on next time"}`,
     "Give at most four corrections (zero is fine if the learner spoke well) and three to five vocab items. Vocab items must be phrases the learner did not produce themselves and that would have helped: things the tutor said that they should learn, or natural versions of what they struggled to say. Never include words the learner already used correctly.",
     zh ? "Use simplified characters." : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function suggestPrompt(lang: LangCode, level: Level, scenario: Scenario, transcript: { role: string; text: string }[], deckSample?: string[]): string {
+  const L = LANGUAGES[lang];
+  const zh = lang === "zh";
+  return [
+    `You are helping a ${L.name} learner (CEFR ${level}: ${L.levelHint[level]}) who does not know what to say next in a spoken roleplay.`,
+    `Scenario: "${scenario.title}". ${scenario.situation}`,
+    `The learner's goals: ${scenario.goals.join("; ")}.`,
+    deckSample?.length ? `Phrases they are studying (reuse these when they fit): ${deckSample.join(" | ")}` : "",
+    "Conversation so far (the last line is the tutor's, which the learner must now answer):",
+    transcript.map((t) => `${t.role === "you" ? "LEARNER" : "TUTOR"}: ${t.text}`).join("\n"),
+    "",
+    `Write the single best thing for the learner to say next: a natural, short reply (one sentence, two at most) that answers the tutor and moves toward a goal not yet completed. Keep it at ${level} level. ${zh ? "Use simplified characters and give pinyin with tone marks." : "Use the register the tutor is using (usted or tú)."}`,
+    "Return only JSON:",
+    `{"say": "the line in ${L.name}", ${zh ? '"reading": "pinyin", ' : ""}"meaning": "English translation", "gist": "a short English instruction telling the learner what to do, e.g. 'Order a coffee and ask if you can pay by card'", "keywords": [{"word": "key word from the line", ${zh ? '"reading": "pinyin", ' : ""}"meaning": "English"}]}`,
+    "Give two or three keywords, the ones the learner is least likely to know.",
   ]
     .filter(Boolean)
     .join("\n");

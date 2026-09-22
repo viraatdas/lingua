@@ -24,6 +24,7 @@ interface SessionRequest {
   scenarioId: string;
   news?: unknown;
   deckSample?: string[];
+  support?: string;
 }
 
 /**

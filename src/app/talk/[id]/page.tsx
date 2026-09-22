@@ -5,14 +5,30 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LANGUAGES } from "@/lib/languages";
 import { getScenario } from "@/lib/scenarios";
-import { useStore } from "@/lib/store";
+import { useStore, type SupportMode } from "@/lib/store";
 import { RealtimeSession, type RealtimeStatus, type TranscriptLine, type TranscriptRole } from "@/lib/realtime";
 import type { NewsStory } from "@/lib/prompts";
 import type { FeedbackResult } from "@/app/api/feedback/route";
+import type { Suggestion } from "@/app/api/suggest/route";
 import { Phrase, ScoreRing, Spinner } from "@/components/ui";
 import { MicIcon } from "@/components/PronounceDrill";
 
 type Stage = "brief" | "call" | "wrap";
+type SupportLevel = "script" | "hints" | "none";
+
+const SUPPORT_OPTIONS: { id: SupportMode; label: string; blurb: string }[] = [
+  { id: "script", label: "Tell me what to say", blurb: "Every turn shows the exact line to read aloud." },
+  { id: "fade", label: "Fade it out", blurb: "Starts with the full line, drops to hints after three turns, then nothing." },
+  { id: "hints", label: "Just hints", blurb: "An English nudge and the key words. You build the sentence." },
+  { id: "none", label: "On my own", blurb: "Nothing unless you ask for it." },
+];
+
+function supportLevelFor(mode: SupportMode, userTurns: number): SupportLevel {
+  if (mode === "script") return "script";
+  if (mode === "hints") return "hints";
+  if (mode === "none") return "none";
+  return userTurns < 3 ? "script" : userTurns < 6 ? "hints" : "none";
+}
 
 interface SavedPhrase {
   text: string;
@@ -31,8 +47,9 @@ export default function ConversationPage() {
 function Conversation({ id }: { id: string }) {
   const router = useRouter();
   const scenario = getScenario(id);
-  const { lang, level, ready, deck, cardState, addCard, logSession } = useStore();
+  const { lang, level, ready, deck, cardState, addCard, logSession, data, setSettings } = useStore();
   const L = LANGUAGES[lang];
+  const support = data.settings.support;
 
   const [stage, setStage] = useState<Stage>("brief");
   const [status, setStatus] = useState<RealtimeStatus>("idle");
@@ -48,17 +65,53 @@ function Conversation({ id }: { id: string }) {
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
   const [showTranslation, setShowTranslation] = useState(false);
+  const [suggestion, setSuggestion] = useState<{ forLine: string; data: Suggestion | null } | null>(null);
+  const requestedFor = useRef<string | null>(null);
+  const [revealed, setRevealed] = useState<string | null>(null); // tutor line id whose full script was revealed on demand
+  const suggestAbort = useRef<AbortController | null>(null);
   const session = useRef<RealtimeSession | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const isNews = scenario?.kind === "news";
 
-  const deckSample = useMemo(() => {
+  const deckCards = useMemo(() => {
     if (!scenario) return [];
     const inCats = deck.filter((c) => scenario.categories.includes(c.category));
     const learning = inCats.filter((c) => cardState(c.id).reps > 0);
     const pool = learning.length >= 6 ? learning : [...learning, ...inCats.filter((c) => !learning.includes(c))];
-    return pool.slice(0, 10).map((c) => `${c.text} = ${c.meaning}`);
+    const rank = (c: (typeof pool)[number]) => scenario.categories.indexOf(c.category);
+    return [...pool].sort((a, b) => rank(a) - rank(b)).slice(0, 10);
   }, [deck, scenario, cardState]);
+  const deckSample = useMemo(() => deckCards.map((c) => `${c.text} = ${c.meaning}`), [deckCards]);
+
+  const userTurns = useMemo(() => lines.filter((l) => l.role === "you" && l.final && l.text.trim()).length, [lines]);
+  const supportLevel = supportLevelFor(support, userTurns);
+  const lastTutor = useMemo(() => [...lines].reverse().find((l) => l.role === "tutor"), [lines]);
+
+  // Ask for a suggested reply each time the tutor finishes a turn.
+  useEffect(() => {
+    if (stage !== "call" || !scenario || !lastTutor?.final || !lastTutor.text.trim()) return;
+    if (requestedFor.current === lastTutor.id) return;
+    requestedFor.current = lastTutor.id;
+    suggestAbort.current?.abort();
+    const ctrl = new AbortController();
+    suggestAbort.current = ctrl;
+    const forLine = lastTutor.id;
+    const transcript = lines.filter((l) => l.text.trim()).map((l) => ({ role: l.role, text: l.text }));
+    fetch("/api/suggest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lang, level, scenarioId: scenario.id, transcript, deckSample }),
+      signal: ctrl.signal,
+    })
+      .then(async (r) => (r.ok ? ((await r.json()) as Suggestion) : null))
+      .then((d) => {
+        if (!ctrl.signal.aborted) setSuggestion({ forLine, data: d });
+      })
+      .catch(() => {
+        if (!ctrl.signal.aborted) setSuggestion({ forLine, data: null });
+      });
+  }, [stage, scenario, lastTutor, lines, lang, level, deckSample]);
+  const suggestionLoading = !!lastTutor?.final && suggestion?.forLine !== lastTutor.id;
 
   useEffect(() => {
     if (!isNews || !ready) return;
@@ -92,6 +145,9 @@ function Conversation({ id }: { id: string }) {
     setStage("call");
     setLines([]);
     setSaved([]);
+    setSuggestion(null);
+    setRevealed(null);
+    requestedFor.current = null;
     const s = new RealtimeSession({
       onStatus: (st, detail) => {
         setStatus(st);
@@ -110,11 +166,11 @@ function Conversation({ id }: { id: string }) {
     });
     session.current = s;
     try {
-      await s.connect({ lang, level, scenarioId: scenario.id, news: isNews ? (news ?? undefined) : undefined, deckSample });
+      await s.connect({ lang, level, scenarioId: scenario.id, news: isNews ? (news ?? undefined) : undefined, deckSample, support });
     } catch {
       /* status already reflects the error */
     }
-  }, [scenario, lang, level, isNews, news, deckSample]);
+  }, [scenario, lang, level, isNews, news, deckSample, support]);
 
   const end = useCallback(async () => {
     if (!scenario) return;
@@ -189,6 +245,41 @@ function Conversation({ id }: { id: string }) {
             <p className="mt-3 text-sm text-ink-2">Level {level}. Speak {L.name}; if you&rsquo;re stuck, say it in English and you&rsquo;ll be told how.</p>
           </div>
         </div>
+
+        <div className="mt-10">
+          <h2 className="text-sm text-ink-3">How much help do you want?</h2>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Support">
+            {SUPPORT_OPTIONS.map((o) => (
+              <button
+                key={o.id}
+                role="radio"
+                aria-checked={support === o.id}
+                onClick={() => setSettings({ support: o.id })}
+                className={`rounded-2xl border px-4 py-3 text-left transition-colors ${support === o.id ? "border-ink bg-ink text-paper" : "border-line hover:bg-wash"}`}
+              >
+                <span className="block font-medium">{o.label}</span>
+                <span className={`mt-0.5 block text-sm ${support === o.id ? "text-paper/80" : "text-ink-2"}`}>{o.blurb}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {deckCards.length > 0 && (
+          <div className="mt-10">
+            <h2 className="text-sm text-ink-3">Lines you might need</h2>
+            <ul className="mt-2 divide-y divide-line-2 border-y border-line-2">
+              {deckCards.slice(0, 6).map((c) => (
+                <li key={c.id} className="flex items-baseline justify-between gap-4 py-2.5">
+                  <span>
+                    <span className="phrase text-lg">{c.text}</span>
+                    {c.reading && <span className="ml-2 text-sm text-ink-2">{c.reading}</span>}
+                  </span>
+                  <span className="shrink-0 text-right text-sm text-ink-3">{c.meaning}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {isNews && (
           <div className="mt-10">
@@ -294,6 +385,16 @@ function Conversation({ id }: { id: string }) {
           </div>
         </div>
 
+        {status === "live" && (supportLevel !== "none" || revealed === lastTutor?.id) && (suggestion || suggestionLoading) && (
+          <SuggestionCard
+            suggestion={{ data: suggestion?.data ?? null, loading: suggestionLoading }}
+            level={revealed === lastTutor?.id ? "script" : supportLevel}
+            stale={speaking === "tutor" || suggestionLoading}
+            mode={support}
+            userTurns={userTurns}
+            onReveal={() => setRevealed(lastTutor?.id ?? null)}
+          />
+        )}
         <div className="border-t border-line px-4 py-3">
           <div className="mx-auto flex max-w-2xl flex-col gap-3">
             <div className="flex items-center gap-3">
@@ -306,9 +407,11 @@ function Conversation({ id }: { id: string }) {
               <button onClick={() => session.current?.nudge(`The learner asked you to slow down and simplify. Repeat your last point more slowly in simpler ${L.name}.`)} className="btn btn-ghost btn-sm" disabled={status !== "live"}>
                 Slower
               </button>
-              <button onClick={() => session.current?.nudge(`Give the learner a hint in English about what they could say next in this situation, then say the ${L.name} version slowly and ask them to repeat it.`)} className="btn btn-ghost btn-sm" disabled={status !== "live"}>
-                Hint
-              </button>
+              {supportLevel !== "script" && revealed !== lastTutor?.id && (
+                <button onClick={() => setRevealed(lastTutor?.id ?? null)} className="btn btn-ghost btn-sm" disabled={status !== "live" || !lastTutor}>
+                  What do I say?
+                </button>
+              )}
               <button
                 onClick={() => {
                   const m = !muted;
@@ -381,6 +484,16 @@ function Conversation({ id }: { id: string }) {
             <div>
               <p className="text-lg">{feedback.summary}</p>
               {feedback.nextTime && <p className="mt-2 text-sm text-ink-2">Next time: {feedback.nextTime}</p>}
+              {feedback.score >= 75 && support === "script" && (
+                <button onClick={() => setSettings({ support: "fade" })} className="mt-3 text-sm text-ink underline underline-offset-2">
+                  You read the script well. Switch to Fade it out for next time?
+                </button>
+              )}
+              {feedback.score >= 75 && support === "fade" && (
+                <button onClick={() => setSettings({ support: "hints" })} className="mt-3 text-sm text-ink underline underline-offset-2">
+                  Ready for less help? Switch to Just hints for next time.
+                </button>
+              )}
             </div>
           </div>
 
@@ -458,6 +571,71 @@ function Conversation({ id }: { id: string }) {
         <button onClick={() => router.push("/review")} className="btn btn-ghost">
           Review deck
         </button>
+      </div>
+    </div>
+  );
+}
+
+function SuggestionCard({
+  suggestion,
+  level,
+  stale,
+  mode,
+  userTurns,
+  onReveal,
+}: {
+  suggestion: { data: Suggestion | null; loading: boolean };
+  level: SupportLevel;
+  stale: boolean;
+  mode: SupportMode;
+  userTurns: number;
+  onReveal: () => void;
+}) {
+  const d = suggestion.data;
+  const fadeNote = mode === "fade" ? (userTurns < 3 ? `Full lines for ${3 - userTurns} more turn${3 - userTurns === 1 ? "" : "s"}` : userTurns < 6 ? `Hints for ${6 - userTurns} more turn${6 - userTurns === 1 ? "" : "s"}` : "") : "";
+  return (
+    <div className={`border-t border-line bg-accent-soft/60 px-4 py-4 transition-opacity ${stale ? "opacity-50" : ""}`} aria-live="polite">
+      <div className="mx-auto max-w-2xl">
+        {suggestion.loading && !d && (
+          <p className="flex items-center gap-2 text-sm text-ink-2">
+            <Spinner /> Working out what you could say
+          </p>
+        )}
+        {!suggestion.loading && !d && <p className="text-sm text-ink-2">No suggestion this time. Answer however you can.</p>}
+        {d && level === "script" && (
+          <div>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-xs text-ink-3">Say this</span>
+              {fadeNote && <span className="text-xs text-ink-3">{fadeNote}</span>}
+            </div>
+            <p className="phrase mt-1 text-2xl leading-snug sm:text-3xl">{d.say}</p>
+            {d.reading && <p className="mt-1 text-ink-2">{d.reading}</p>}
+            <p className="mt-1 text-sm text-ink-2">{d.meaning}</p>
+          </div>
+        )}
+        {d && level === "hints" && (
+          <div>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-xs text-ink-3">Your move</span>
+              {fadeNote && <span className="text-xs text-ink-3">{fadeNote}</span>}
+            </div>
+            <p className="mt-1 text-lg">{d.gist}</p>
+            {d.keywords.length > 0 && (
+              <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                {d.keywords.map((k, i) => (
+                  <span key={i}>
+                    <span className="phrase text-base">{k.word}</span>
+                    {k.reading && <span className="text-ink-2"> {k.reading}</span>}
+                    <span className="text-ink-3"> {k.meaning}</span>
+                  </span>
+                ))}
+              </p>
+            )}
+            <button onClick={onReveal} className="mt-2 text-sm underline underline-offset-2">
+              Show me the exact words
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

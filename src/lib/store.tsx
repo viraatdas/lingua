@@ -35,11 +35,14 @@ export interface LangProgress {
   sessions: SessionLogEntry[];
 }
 
+export type SupportMode = "script" | "fade" | "hints" | "none";
+
 export interface Settings {
   lang: LangCode;
   level: Level;
   newPerDay: number;
   onboarded: boolean;
+  support: SupportMode;
 }
 
 export interface StoreData {
@@ -61,7 +64,7 @@ const emptyProgress = (): LangProgress => ({
 
 const defaultData = (): StoreData => ({
   version: 1,
-  settings: { lang: "es", level: "A2", newPerDay: 10, onboarded: false },
+  settings: { lang: "es", level: "A2", newPerDay: 10, onboarded: false, support: "fade" },
   progress: { es: emptyProgress(), zh: emptyProgress() },
 });
 

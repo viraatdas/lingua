@@ -17,6 +17,7 @@ export async function POST(req: Request) {
     scenarioId?: string;
     news?: NewsStory[];
     deckSample?: string[];
+    support?: string;
   };
   if (!isLang(body.lang)) return new NextResponse("Unknown language", { status: 400 });
   const level = (LEVELS.has(body.level ?? "") ? body.level : "A2") as Level;
@@ -30,6 +31,7 @@ export async function POST(req: Request) {
     scenario,
     news: Array.isArray(body.news) ? body.news.slice(0, 3) : undefined,
     deckSample: Array.isArray(body.deckSample) ? body.deckSample.slice(0, 12).map(String) : undefined,
+    support: typeof body.support === "string" ? body.support : undefined,
   });
 
   const session = {
